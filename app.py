@@ -40,40 +40,46 @@ st.markdown(page_bg_color, unsafe_allow_html=True)
 # ==========================================
 # FUNGSI GOOGLE API (DRIVE & SHEETS)
 # ==========================================
-# NOTA: Anda perlu ada fail credentials.json di dalam folder yang sama
 SCOPE = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive'
 ]
 
-# PAUTAN GOOGLE SHEET YANG TELAH DIKEMASKINI
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1a5Uc5H7IYYtK8ry6dlZQCvkRg63YgNldF8Qinp0TUH0/edit?usp=sharing"
 
 def get_google_services():
     try:
         creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', SCOPE)
-        # Google Sheets
         gc = gspread.authorize(creds)
-        # Google Drive
         drive_service = build('drive', 'v3', credentials=creds)
         return gc, drive_service
     except Exception as e:
         st.warning(f"Sila muat naik 'credentials.json' untuk membolehkan fungsi Google. Ralat: {e}")
         return None, None
 
-def create_drive_folder(drive_service, folder_name):
-    file_metadata = {
-        'name': folder_name,
-        'mimeType': 'application/vnd.google-apps.folder'
-    }
-    folder = drive_service.files().create(body=file_metadata, fields='id, webViewLink').execute()
-    return folder.get('id'), folder.get('webViewLink')
-
-def upload_to_drive(drive_service, folder_id, file_name, file_bytes):
+def upload_file_to_drive(drive_service, file_name, file_bytes):
+    """Memuat naik fail terus ke Google Drive dan mengembalikan pautan akses (webViewLink)."""
     media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='application/pdf', resumable=True)
-    file_metadata = {'name': file_name, 'parents': [folder_id]}
-    uploaded_file = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-    return uploaded_file.get('id')
+    file_metadata = {'name': file_name}
+    
+    uploaded_file = drive_service.files().create(
+        body=file_metadata, 
+        media_body=media, 
+        fields='id, webViewLink'
+    ).execute()
+    
+    file_id = uploaded_file.get('id')
+    
+    # Buka kebenaran akses bacaan (reader) supaya fail boleh dibuka melalui link
+    try:
+        drive_service.permissions().create(
+            fileId=file_id,
+            body={'type': 'anyone', 'role': 'reader'}
+        ).execute()
+    except Exception:
+        pass
+        
+    return uploaded_file.get('webViewLink')
 
 # ==========================================
 # FUNGSI PEMPROSESAN PDF & COP "BANTU"
@@ -82,7 +88,7 @@ def create_stamp():
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=A4)
     c.setFont("Helvetica-Bold", 60)
-    c.setFillColorRGB(1, 0, 0, alpha=0.3) # Merah yang transparent
+    c.setFillColorRGB(1, 0, 0, alpha=0.3)  # Merah separa lutsinar
     c.translate(200, 400)
     c.rotate(45)
     c.drawString(0, 0, "BANTU")
@@ -116,13 +122,11 @@ def extract_data_from_pdf(pdf_file, doc_type):
                 
     result = {}
     if doc_type == "ic":
-        # Scan menggunakan regex berdasarkan format "Nama :" dan "No.ic :"
         nama_match = re.search(r'Nama\s*:\s*(.*)', data, re.IGNORECASE)
         ic_match = re.search(r'No\.?ic\s*:\s*([\d-]+)', data, re.IGNORECASE)
         result['nama'] = nama_match.group(1).strip() if nama_match else "Gagal dikesan"
         result['ic'] = ic_match.group(1).strip() if ic_match else "Gagal dikesan"
     elif doc_type == "borang":
-        # Scan tarikh permohonan
         tarikh_match = re.search(r'Tarikh\s*Permohonan\s*:\s*(.*)', data, re.IGNORECASE)
         result['tarikh'] = tarikh_match.group(1).strip() if tarikh_match else datetime.now().strftime("%d-%m-%Y")
         
@@ -134,17 +138,14 @@ def extract_data_from_pdf(pdf_file, doc_type):
 st.title("🛡️ AUTO URUSAN DOKUMEN LICENSING")
 st.markdown("---")
 
-# Menu Navigasi
 menu = st.radio("Sila pilih paparan:", ["PERMOHONAN BARU", "MASTERLIST CLIENT"], horizontal=True)
 
 if menu == "PERMOHONAN BARU":
     st.subheader("Borang Permohonan Baru")
     
-    # Dropdown Pakej
     pakej_pilihan = st.selectbox("Sila Pilih Pakej:", ["PAKEJ NOMBOR 1", "PAKEJ NOMBOR 2", "PAKEJ NOMBOR 3"])
     
     st.write("### Muat Naik Dokumen")
-    # Dua ruang upload bersebelahan
     col1, col2 = st.columns(2)
     with col1:
         borang_file = st.file_uploader("Upload Borang Permohonan (PDF)", type=["pdf"])
@@ -153,13 +154,13 @@ if menu == "PERMOHONAN BARU":
 
     if borang_file and ic_file:
         if st.button("🚀 RUN", use_container_width=True):
-            with st.spinner("Sedang memproses dokumen, mencipta folder, dan mengemaskini sistem..."):
+            with st.spinner("Sedang memproses cop dokumen, memuat naik ke Drive, dan mengemaskini masterlist..."):
                 try:
-                    # 1. Cop Dokumen
+                    # 1. Cop Dokumen "BANTU"
                     stamped_borang = stamp_pdf(borang_file)
                     stamped_ic = stamp_pdf(ic_file)
                     
-                    # 2. Extract Data
+                    # 2. Imbas / Ekstrak Data
                     data_ic = extract_data_from_pdf(ic_file, "ic")
                     data_borang = extract_data_from_pdf(borang_file, "borang")
                     
@@ -167,33 +168,32 @@ if menu == "PERMOHONAN BARU":
                     no_ic = data_ic.get('ic')
                     tarikh = data_borang.get('tarikh')
                     
-                    # Jika gagal dikesan, gunakan fallback
-                    if nama == "Gagal dikesan": nama = "Klien Tanpa Nama"
-                    if no_ic == "Gagal dikesan": no_ic = "Tiada IC"
-                    folder_name = f"{nama} - {no_ic}"
+                    if nama == "Gagal dikesan": nama = "Klien_Tanpa_Nama"
+                    if no_ic == "Gagal dikesan": no_ic = "Tiada_IC"
                     
-                    # 3. Google API Action
+                    # 3. Muat Naik Terus ke Google Drive (Tanpa Folder Baharu)
                     gc, drive_service = get_google_services()
                     if gc and drive_service:
-                        # Buat folder Drive
-                        folder_id, folder_link = create_drive_folder(drive_service, folder_name)
+                        nama_fail_borang = f"Borang_Permohonan_{nama}_{no_ic}_BANTU.pdf"
+                        nama_fail_ic = f"Salinan_IC_{nama}_{no_ic}_BANTU.pdf"
                         
-                        # Upload file ke dalam folder tersebut
-                        upload_to_drive(drive_service, folder_id, f"Borang_Permohonan_BANTU.pdf", stamped_borang)
-                        upload_to_drive(drive_service, folder_id, f"Salinan_IC_BANTU.pdf", stamped_ic)
+                        link_borang = upload_file_to_drive(drive_service, nama_fail_borang, stamped_borang)
+                        link_ic = upload_file_to_drive(drive_service, nama_fail_ic, stamped_ic)
                         
-                        # Update Google Sheet
+                        # 4. Masukkan Rekod ke Google Sheet Masterlist
+                        # Susunan Lajur: [Nama, No IC, Tarikh Permohonan, Pakej, Link Borang, Link Salinan IC]
                         sheet = gc.open_by_url(SHEET_URL).sheet1
-                        row_data = [nama, no_ic, tarikh, pakej_pilihan, folder_link]
+                        row_data = [nama, no_ic, tarikh, pakej_pilihan, link_borang, link_ic]
                         sheet.append_row(row_data)
                         
-                        st.success("✅ PROSES BERJAYA!")
-                        st.info(f"📁 [Klik Sini Untuk Buka Folder Google Drive Client]({folder_link})")
+                        st.success("✅ PROSES BERJAYA! Data dan dokumen telah direkodkan.")
+                        st.markdown(f"- 📄 **Borang Permohonan:** [Buka Fail PDF]({link_borang})")
+                        st.markdown(f"- 🪪 **Salinan IC:** [Buka Fail PDF]({link_ic})")
                     else:
-                        st.error("Gagal menyambung ke Google API. Pastikan fail credentials.json wujud.")
+                        st.error("Gagal menyambung ke Google API. Sila pastikan fail 'credentials.json' wujud dan sah.")
                         
                 except Exception as e:
-                    st.error(f"Berlaku ralat: {e}")
+                    st.error(f"Berlaku ralat semasa pemprosesan: {e}")
 
 elif menu == "MASTERLIST CLIENT":
     st.subheader("Pangkalan Data Pelanggan")
