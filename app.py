@@ -45,7 +45,9 @@ SCOPE = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive'
 ]
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1-6TO29A1zxyvjIbsiKe49zR3D147rGeRDfJNjNye0Es/edit?usp=sharing"
+
+# PAUTAN GOOGLE SHEET YANG TELAH DIKEMASKINI
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1a5Uc5H7IYYtK8ry6dlZQCvkRg63YgNldF8Qinp0TUH0/edit?usp=sharing"
 
 def get_google_services():
     try:
@@ -164,6 +166,10 @@ if menu == "PERMOHONAN BARU":
                     nama = data_ic.get('nama')
                     no_ic = data_ic.get('ic')
                     tarikh = data_borang.get('tarikh')
+                    
+                    # Jika gagal dikesan, gunakan fallback
+                    if nama == "Gagal dikesan": nama = "Klien Tanpa Nama"
+                    if no_ic == "Gagal dikesan": no_ic = "Tiada IC"
                     folder_name = f"{nama} - {no_ic}"
                     
                     # 3. Google API Action
@@ -184,7 +190,7 @@ if menu == "PERMOHONAN BARU":
                         st.success("✅ PROSES BERJAYA!")
                         st.info(f"📁 [Klik Sini Untuk Buka Folder Google Drive Client]({folder_link})")
                     else:
-                        st.error("Gagal menyambung ke Google API. Pastikan credentials.json wujud dan sah.")
+                        st.error("Gagal menyambung ke Google API. Pastikan fail credentials.json wujud.")
                         
                 except Exception as e:
                     st.error(f"Berlaku ralat: {e}")
