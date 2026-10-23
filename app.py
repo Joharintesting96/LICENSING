@@ -1,15 +1,19 @@
 import streamlit as st
 import io
 import re
+import base64
+import requests
 from datetime import datetime
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 from PyPDF2 import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 import pdfplumber
+
+# ==========================================
+# PAUTAN SISTEM
+# ==========================================
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwtls5utGSr6pjeaQ0526WN5GOZMTzTRdmYEATnT8nXRQIX78Fali31efPbXGfAlcgQ/exec"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1a5Uc5H7IYYtK8ry6dlZQCvkRg63YgNldF8Qinp0TUH0/edit?usp=sharing"
 
 # ==========================================
 # KONFIGURASI UI & CSS
@@ -27,12 +31,12 @@ page_bg_color = """
     background-color: #1A365D;
 }
 
-/* Penyesuaian warna teks dan label */
+/* Penyesuaian warna teks dan tajuk */
 h1, h2, h3, h4, label, [data-testid="stMarkdownContainer"] p {
     color: #FFFFFF !important;
 }
 
-/* Kotak Dropdown (Selectbox) agar teks terlihat jelas */
+/* Kotak Dropdown (Selectbox) agar teks jelas kelihatan */
 div[data-baseweb="select"] * {
     color: #111827 !important;
 }
@@ -56,7 +60,7 @@ div[data-baseweb="popover"] * {
     font-weight: bold !important;
 }
 
-/* Pengaturan Tombol */
+/* Pengaturan Butang */
 .stButton>button {
     background-color: #4CAF50 !important;
     color: white !important;
@@ -74,50 +78,7 @@ div[data-baseweb="popover"] * {
 st.markdown(page_bg_color, unsafe_allow_html=True)
 
 # ==========================================
-# KONFIGURASI GOOGLE API (DRIVE & SHEETS)
-# ==========================================
-SCOPE = [
-    'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/drive'
-]
-
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1a5Uc5H7IYYtK8ry6dlZQCvkRg63YgNldF8Qinp0TUH0/edit?usp=sharing"
-
-def get_google_services():
-    try:
-        creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', SCOPE)
-        gc = gspread.authorize(creds)
-        drive_service = build('drive', 'v3', credentials=creds)
-        return gc, drive_service
-    except Exception as e:
-        st.warning(f"Silakan unggah berkas 'credentials.json' yang valid. Ralat: {e}")
-        return None, None
-
-def upload_file_to_drive(drive_service, file_name, file_bytes):
-    """Mengunggah berkas ke Google Drive dan mengembalikan tautan dokumen."""
-    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='application/pdf', resumable=True)
-    file_metadata = {'name': file_name}
-    
-    uploaded_file = drive_service.files().create(
-        body=file_metadata, 
-        media_body=media, 
-        fields='id, webViewLink'
-    ).execute()
-    
-    file_id = uploaded_file.get('id')
-    
-    try:
-        drive_service.permissions().create(
-            fileId=file_id,
-            body={'type': 'anyone', 'role': 'reader'}
-        ).execute()
-    except Exception:
-        pass
-        
-    return uploaded_file.get('webViewLink')
-
-# ==========================================
-# FUNGSI STEMPEL & EKSTRAKSI PDF
+# FUNGSI COP & IMBASAN PDF
 # ==========================================
 def create_stamp():
     packet = io.BytesIO()
@@ -159,8 +120,8 @@ def extract_data_from_pdf(pdf_file, doc_type):
     if doc_type == "ic":
         nama_match = re.search(r'Nama\s*:\s*(.*)', data, re.IGNORECASE)
         ic_match = re.search(r'No\.?ic\s*:\s*([\d-]+)', data, re.IGNORECASE)
-        result['nama'] = nama_match.group(1).strip() if nama_match else "Gagal dikesan"
-        result['ic'] = ic_match.group(1).strip() if ic_match else "Gagal dikesan"
+        result['nama'] = nama_match.group(1).strip() if nama_match else "Klien_Tanpa_Nama"
+        result['ic'] = ic_match.group(1).strip() if ic_match else "Tiada_IC"
     elif doc_type == "borang":
         tarikh_match = re.search(r'Tarikh\s*Permohonan\s*:\s*(.*)', data, re.IGNORECASE)
         result['tarikh'] = tarikh_match.group(1).strip() if tarikh_match else datetime.now().strftime("%d-%m-%Y")
@@ -168,9 +129,8 @@ def extract_data_from_pdf(pdf_file, doc_type):
     return result
 
 # ==========================================
-# ANTARMUKA UTAMA (UI)
+# ANTARAMUKA UTAMA (UI)
 # ==========================================
-# Nilai awal disetel None agar tampilan bawah tidak langsung muncul
 if 'page' not in st.session_state:
     st.session_state.page = None
 
@@ -192,7 +152,6 @@ with col_nav2:
 
 st.markdown("---")
 
-# Tampilan hanya muncul jika tombol telah ditekan
 if st.session_state.page == "PERMOHONAN BARU":
     st.subheader("Borang Permohonan Baru")
     
@@ -207,13 +166,13 @@ if st.session_state.page == "PERMOHONAN BARU":
 
     if borang_file and ic_file:
         if st.button("🚀 RUN", use_container_width=True):
-            with st.spinner("Sedang memproses dokumen, memuat naik ke Drive, dan mengemaskini masterlist..."):
+            with st.spinner("Sedang memproses dokumen dan menghantar rekod..."):
                 try:
-                    # Stempel dokumen
+                    # 1. Cop Dokumen "BANTU"
                     stamped_borang = stamp_pdf(borang_file)
                     stamped_ic = stamp_pdf(ic_file)
                     
-                    # Ekstraksi data
+                    # 2. Imbas Data Teks
                     data_ic = extract_data_from_pdf(ic_file, "ic")
                     data_borang = extract_data_from_pdf(borang_file, "borang")
                     
@@ -221,28 +180,27 @@ if st.session_state.page == "PERMOHONAN BARU":
                     no_ic = data_ic.get('ic')
                     tarikh = data_borang.get('tarikh')
                     
-                    if nama == "Gagal dikesan": nama = "Klien_Tanpa_Nama"
-                    if no_ic == "Gagal dikesan": no_ic = "Tiada_IC"
+                    # 3. Hantar data ke Google Apps Script Web App
+                    payload = {
+                        "nama": nama,
+                        "no_ic": no_ic,
+                        "tarikh": tarikh,
+                        "pakej": pakej_pilihan,
+                        "borang_name": f"Borang_{nama}_{no_ic}_BANTU.pdf",
+                        "borang_base64": base64.b64encode(stamped_borang).decode("utf-8"),
+                        "ic_name": f"SalinanIC_{nama}_{no_ic}_BANTU.pdf",
+                        "ic_base64": base64.b64encode(stamped_ic).decode("utf-8")
+                    }
                     
-                    # Unggah ke Google Drive
-                    gc, drive_service = get_google_services()
-                    if gc and drive_service:
-                        nama_fail_borang = f"Borang_Permohonan_{nama}_{no_ic}_BANTU.pdf"
-                        nama_fail_ic = f"Salinan_IC_{nama}_{no_ic}_BANTU.pdf"
-                        
-                        link_borang = upload_file_to_drive(drive_service, nama_fail_borang, stamped_borang)
-                        link_ic = upload_file_to_drive(drive_service, nama_fail_ic, stamped_ic)
-                        
-                        # Simpan ke Google Sheets
-                        sheet = gc.open_by_url(SHEET_URL).sheet1
-                        row_data = [nama, no_ic, tarikh, pakej_pilihan, link_borang, link_ic]
-                        sheet.append_row(row_data)
-                        
-                        st.success("✅ PROSES BERJAYA! Dokumen dan rekod telah disimpan.")
-                        st.markdown(f"- 📄 **Borang Permohonan:** [Buka Fail PDF]({link_borang})")
-                        st.markdown(f"- 🪪 **Salinan IC:** [Buka Fail PDF]({link_ic})")
+                    response = requests.post(WEB_APP_URL, json=payload)
+                    res_json = response.json()
+                    
+                    if res_json.get("status") == "success":
+                        st.success("✅ PROSES BERJAYA! Dokumen dan rekod telah disimpan ke Google Drive & Masterlist.")
+                        st.markdown(f"- 📄 **Borang Permohonan:** [Buka Fail PDF]({res_json.get('borang_url')})")
+                        st.markdown(f"- 🪪 **Salinan IC:** [Buka Fail PDF]({res_json.get('ic_url')})")
                     else:
-                        st.error("Gagal menyambung ke Google API. Pastikan fail 'credentials.json' wujud.")
+                        st.error(f"Ralat dari pelayan: {res_json.get('message')}")
                         
                 except Exception as e:
                     st.error(f"Berlaku ralat: {e}")
