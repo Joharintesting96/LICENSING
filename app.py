@@ -60,7 +60,7 @@ div[data-baseweb="popover"] * {
     font-weight: bold !important;
 }
 
-/* Pengaturan Butang Utama */
+/* Butang Utama */
 .stButton>button {
     background-color: #4CAF50 !important;
     color: white !important;
@@ -108,7 +108,8 @@ def stamp_pdf(uploaded_file):
     pdf_writer.write(output)
     return output.getvalue()
 
-def extract_data_from_pdf(pdf_file, doc_type):
+def extract_data_from_borang(pdf_file):
+    """Mengekstrak data Nama, No IC, dan Tarikh terus daripada dokumen Borang Permohonan."""
     data = ""
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
@@ -117,30 +118,28 @@ def extract_data_from_pdf(pdf_file, doc_type):
                 data += text + "\n"
                 
     result = {}
-    if doc_type == "ic":
-        # 1. Mengesan Nama di sebelah 'nama:' atau pada baris seterusnya
-        nama_match = re.search(r'nama\s*:\s*\n?\s*([^\r\n]+)', data, re.IGNORECASE)
-        if nama_match:
-            nama_val = nama_match.group(1).strip()
-            # Elakkan terambil teks 'NO IC' sekiranya baris nama kosong
-            if not nama_val.lower().startswith("no"):
-                result['nama'] = nama_val
-            else:
-                result['nama'] = "Klien_Tanpa_Nama"
+
+    # 1. Mengesan Nama
+    nama_match = re.search(r'nama\s*:\s*\n?\s*([^\r\n]+)', data, re.IGNORECASE)
+    if nama_match:
+        nama_val = nama_match.group(1).strip()
+        if not any(nama_val.lower().startswith(x) for x in ["no", "tarikh", "ic"]):
+            result['nama'] = nama_val
         else:
             result['nama'] = "Klien_Tanpa_Nama"
+    else:
+        result['nama'] = "Klien_Tanpa_Nama"
 
-        # 2. Mengesan format NO IC (menyokong ruang kosong seperti 'NO IC : 666')
-        ic_match = re.search(r'no\.?\s*ic\s*:\s*([^\r\n]+)', data, re.IGNORECASE)
-        if ic_match:
-            result['ic'] = ic_match.group(1).strip()
-        else:
-            result['ic'] = "Tiada_IC"
+    # 2. Mengesan No IC
+    ic_match = re.search(r'no\.?\s*ic\s*:\s*([^\r\n]+)', data, re.IGNORECASE)
+    if ic_match:
+        result['ic'] = ic_match.group(1).strip()
+    else:
+        result['ic'] = "Tiada_IC"
 
-    elif doc_type == "borang":
-        # 3. Mengesan Tarikh Permohonan
-        tarikh_match = re.search(r'tarikh(?:\s*permohonan)?\s*:\s*([^\r\n]+)', data, re.IGNORECASE)
-        result['tarikh'] = tarikh_match.group(1).strip() if tarikh_match else datetime.now().strftime("%d/%m/%y")
+    # 3. Mengesan Tarikh Permohonan
+    tarikh_match = re.search(r'tarikh(?:\s*permohonan)?\s*:\s*([^\r\n]+)', data, re.IGNORECASE)
+    result['tarikh'] = tarikh_match.group(1).strip() if tarikh_match else datetime.now().strftime("%d/%m/%y")
         
     return result
 
@@ -182,18 +181,17 @@ if st.session_state.page == "PERMOHONAN BARU":
 
     if borang_file and ic_file:
         if st.button("🚀 RUN", use_container_width=True):
-            with st.spinner("Sedang memproses dokumen dan menghantar rekod..."):
+            with st.spinner("Sedang memproses dokumen dan mengekstrak data dari borang..."):
                 try:
-                    # 1. Cop Dokumen "BANTU"
+                    # 1. Cop Dokumen "BANTU" untuk kedua-dua fail
                     stamped_borang = stamp_pdf(borang_file)
                     stamped_ic = stamp_pdf(ic_file)
                     
-                    # 2. Imbas Data Teks
-                    data_ic = extract_data_from_pdf(ic_file, "ic")
-                    data_borang = extract_data_from_pdf(borang_file, "borang")
+                    # 2. Imbas Semua Data Teks (Nama, No IC, Tarikh) dari Borang Permohonan
+                    data_borang = extract_data_from_borang(borang_file)
                     
-                    nama = data_ic.get('nama')
-                    no_ic = data_ic.get('ic')
+                    nama = data_borang.get('nama')
+                    no_ic = data_borang.get('ic')
                     tarikh = data_borang.get('tarikh')
                     
                     # 3. Hantar data ke Google Apps Script Web App
@@ -212,16 +210,17 @@ if st.session_state.page == "PERMOHONAN BARU":
                     res_json = response.json()
                     
                     if res_json.get("status") == "success":
-                        st.success("✅ PROSES BERJAYA! Dokumen dan rekod telah disimpan ke Google Drive & Masterlist.")
+                        st.success("✅ PROSES BERJAYA! Data dan dokumen telah direkodkan ke Google Drive & Masterlist.")
                         st.markdown(f"- **Nama Dikesan:** `{nama}`")
                         st.markdown(f"- **No IC Dikesan:** `{no_ic}`")
+                        st.markdown(f"- **Tarikh Permohonan:** `{tarikh}`")
                         st.markdown(f"- 📄 **Borang Permohonan:** [Buka Fail PDF]({res_json.get('borang_url')})")
                         st.markdown(f"- 🪪 **Salinan IC:** [Buka Fail PDF]({res_json.get('ic_url')})")
                     else:
                         st.error(f"Ralat dari pelayan: {res_json.get('message')}")
                         
                 except Exception as e:
-                    st.error(f"Berlaku ralat: {e}")
+                    st.error(f"Berlaku ralat semasa pemprosesan: {e}")
 
 elif st.session_state.page == "MASTERLIST CLIENT":
     st.subheader("Pangkalan Data Pelanggan")
