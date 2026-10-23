@@ -1,0 +1,7 @@
+streamlit
+PyPDF2
+reportlab
+pdfplumber
+gspread
+google-api-python-client
+oauth2client
