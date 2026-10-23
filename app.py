@@ -27,12 +27,12 @@ page_bg_color = """
     background-color: #1A365D;
 }
 
-/* Tajuk, label, dan teks */
+/* Penyesuaian warna teks dan label */
 h1, h2, h3, h4, label, [data-testid="stMarkdownContainer"] p {
     color: #FFFFFF !important;
 }
 
-/* Kotak Dropdown (Selectbox) & Menu Pilihan (Font gelap agar mudah dibaca) */
+/* Kotak Dropdown (Selectbox) agar teks terlihat jelas */
 div[data-baseweb="select"] * {
     color: #111827 !important;
 }
@@ -56,7 +56,7 @@ div[data-baseweb="popover"] * {
     font-weight: bold !important;
 }
 
-/* Semua Butang Aplikasi */
+/* Pengaturan Tombol */
 .stButton>button {
     background-color: #4CAF50 !important;
     color: white !important;
@@ -90,11 +90,11 @@ def get_google_services():
         drive_service = build('drive', 'v3', credentials=creds)
         return gc, drive_service
     except Exception as e:
-        st.warning(f"Sila muat naik fail 'credentials.json' yang sah. Ralat: {e}")
+        st.warning(f"Silakan unggah berkas 'credentials.json' yang valid. Ralat: {e}")
         return None, None
 
 def upload_file_to_drive(drive_service, file_name, file_bytes):
-    """Memuat naik fail ke Google Drive dan menjana pautan paparan."""
+    """Mengunggah berkas ke Google Drive dan mengembalikan tautan dokumen."""
     media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='application/pdf', resumable=True)
     file_metadata = {'name': file_name}
     
@@ -106,7 +106,6 @@ def upload_file_to_drive(drive_service, file_name, file_bytes):
     
     file_id = uploaded_file.get('id')
     
-    # Menetapkan akses bacaan awam pada fail tersebut
     try:
         drive_service.permissions().create(
             fileId=file_id,
@@ -118,7 +117,7 @@ def upload_file_to_drive(drive_service, file_name, file_bytes):
     return uploaded_file.get('webViewLink')
 
 # ==========================================
-# FUNGSI COP & IMBASAN PDF
+# FUNGSI STEMPEL & EKSTRAKSI PDF
 # ==========================================
 def create_stamp():
     packet = io.BytesIO()
@@ -169,29 +168,31 @@ def extract_data_from_pdf(pdf_file, doc_type):
     return result
 
 # ==========================================
-# ANTARAMUKA UTAMA (UI)
+# ANTARMUKA UTAMA (UI)
 # ==========================================
-# 1. Inisialisasi Sistem Navigasi Page (Session State)
+# Nilai awal disetel None agar tampilan bawah tidak langsung muncul
 if 'page' not in st.session_state:
-    st.session_state.page = "PERMOHONAN BARU"
+    st.session_state.page = None
 
 st.title("🛡️ AUTO URUSAN DOKUMEN LICENSING")
 st.markdown("---")
 
-# 2. Butang Navigasi Bersebelahan
 st.write("Sila pilih paparan:")
-col_nav1, col_nav2, col_nav3, col_nav4 = st.columns(4)
+col_nav1, col_nav2, col_spacer = st.columns([1, 1, 2])
 
 with col_nav1:
     if st.button("📄 PERMOHONAN BARU", use_container_width=True):
         st.session_state.page = "PERMOHONAN BARU"
+        st.rerun()
+
 with col_nav2:
     if st.button("📊 MASTERLIST CLIENT", use_container_width=True):
         st.session_state.page = "MASTERLIST CLIENT"
+        st.rerun()
 
 st.markdown("---")
 
-# 3. Logik Paparan Berdasarkan Butang Yang Ditekan
+# Tampilan hanya muncul jika tombol telah ditekan
 if st.session_state.page == "PERMOHONAN BARU":
     st.subheader("Borang Permohonan Baru")
     
@@ -208,11 +209,11 @@ if st.session_state.page == "PERMOHONAN BARU":
         if st.button("🚀 RUN", use_container_width=True):
             with st.spinner("Sedang memproses dokumen, memuat naik ke Drive, dan mengemaskini masterlist..."):
                 try:
-                    # Cop Dokumen "BANTU"
+                    # Stempel dokumen
                     stamped_borang = stamp_pdf(borang_file)
                     stamped_ic = stamp_pdf(ic_file)
                     
-                    # Imbas Data Teks
+                    # Ekstraksi data
                     data_ic = extract_data_from_pdf(ic_file, "ic")
                     data_borang = extract_data_from_pdf(borang_file, "borang")
                     
@@ -223,7 +224,7 @@ if st.session_state.page == "PERMOHONAN BARU":
                     if nama == "Gagal dikesan": nama = "Klien_Tanpa_Nama"
                     if no_ic == "Gagal dikesan": no_ic = "Tiada_IC"
                     
-                    # Muat Naik Fail ke Drive
+                    # Unggah ke Google Drive
                     gc, drive_service = get_google_services()
                     if gc and drive_service:
                         nama_fail_borang = f"Borang_Permohonan_{nama}_{no_ic}_BANTU.pdf"
@@ -232,7 +233,7 @@ if st.session_state.page == "PERMOHONAN BARU":
                         link_borang = upload_file_to_drive(drive_service, nama_fail_borang, stamped_borang)
                         link_ic = upload_file_to_drive(drive_service, nama_fail_ic, stamped_ic)
                         
-                        # Masukkan Rekod ke Google Sheet Masterlist
+                        # Simpan ke Google Sheets
                         sheet = gc.open_by_url(SHEET_URL).sheet1
                         row_data = [nama, no_ic, tarikh, pakej_pilihan, link_borang, link_ic]
                         sheet.append_row(row_data)
@@ -258,3 +259,6 @@ elif st.session_state.page == "MASTERLIST CLIENT":
         </a>
         """, unsafe_allow_html=True
     )
+
+else:
+    st.info("👆 Sila klik salah satu pilihan butang di atas untuk memulakan urusan.")
