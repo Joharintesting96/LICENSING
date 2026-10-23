@@ -36,7 +36,7 @@ h1, h2, h3, h4, label, [data-testid="stMarkdownContainer"] p {
     color: #FFFFFF !important;
 }
 
-/* Kotak Dropdown (Selectbox) agar teks jelas kelihatan */
+/* Kotak Dropdown (Selectbox) */
 div[data-baseweb="select"] * {
     color: #111827 !important;
 }
@@ -60,7 +60,7 @@ div[data-baseweb="popover"] * {
     font-weight: bold !important;
 }
 
-/* Pengaturan Butang */
+/* Pengaturan Butang Utama */
 .stButton>button {
     background-color: #4CAF50 !important;
     color: white !important;
@@ -118,13 +118,29 @@ def extract_data_from_pdf(pdf_file, doc_type):
                 
     result = {}
     if doc_type == "ic":
-        nama_match = re.search(r'Nama\s*:\s*(.*)', data, re.IGNORECASE)
-        ic_match = re.search(r'No\.?ic\s*:\s*([\d-]+)', data, re.IGNORECASE)
-        result['nama'] = nama_match.group(1).strip() if nama_match else "Klien_Tanpa_Nama"
-        result['ic'] = ic_match.group(1).strip() if ic_match else "Tiada_IC"
+        # 1. Mengesan Nama di sebelah 'nama:' atau pada baris seterusnya
+        nama_match = re.search(r'nama\s*:\s*\n?\s*([^\r\n]+)', data, re.IGNORECASE)
+        if nama_match:
+            nama_val = nama_match.group(1).strip()
+            # Elakkan terambil teks 'NO IC' sekiranya baris nama kosong
+            if not nama_val.lower().startswith("no"):
+                result['nama'] = nama_val
+            else:
+                result['nama'] = "Klien_Tanpa_Nama"
+        else:
+            result['nama'] = "Klien_Tanpa_Nama"
+
+        # 2. Mengesan format NO IC (menyokong ruang kosong seperti 'NO IC : 666')
+        ic_match = re.search(r'no\.?\s*ic\s*:\s*([^\r\n]+)', data, re.IGNORECASE)
+        if ic_match:
+            result['ic'] = ic_match.group(1).strip()
+        else:
+            result['ic'] = "Tiada_IC"
+
     elif doc_type == "borang":
-        tarikh_match = re.search(r'Tarikh\s*Permohonan\s*:\s*(.*)', data, re.IGNORECASE)
-        result['tarikh'] = tarikh_match.group(1).strip() if tarikh_match else datetime.now().strftime("%d-%m-%Y")
+        # 3. Mengesan Tarikh Permohonan
+        tarikh_match = re.search(r'tarikh(?:\s*permohonan)?\s*:\s*([^\r\n]+)', data, re.IGNORECASE)
+        result['tarikh'] = tarikh_match.group(1).strip() if tarikh_match else datetime.now().strftime("%d/%m/%y")
         
     return result
 
@@ -197,6 +213,8 @@ if st.session_state.page == "PERMOHONAN BARU":
                     
                     if res_json.get("status") == "success":
                         st.success("✅ PROSES BERJAYA! Dokumen dan rekod telah disimpan ke Google Drive & Masterlist.")
+                        st.markdown(f"- **Nama Dikesan:** `{nama}`")
+                        st.markdown(f"- **No IC Dikesan:** `{no_ic}`")
                         st.markdown(f"- 📄 **Borang Permohonan:** [Buka Fail PDF]({res_json.get('borang_url')})")
                         st.markdown(f"- 🪪 **Salinan IC:** [Buka Fail PDF]({res_json.get('ic_url')})")
                     else:
